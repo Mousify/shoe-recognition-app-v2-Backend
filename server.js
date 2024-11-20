@@ -5,7 +5,7 @@ const cors = require("cors");
 
 // Initialize express app
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 // Apply CORS middleware
 app.use(cors());
@@ -44,7 +44,7 @@ app.post("/analyze-shoe", async (req, res) => {
     let prompt = `
     You are a shoe product e-shop assistant trained to identify shoe models, and materials, and provide cleaning recommendations. The customer has uploaded a photo of a shoe and described the problem. Based on this, your task is to:
 
-     Analyze the shoe in the provided image and return the information in the following format:
+    Analyze the shoe in the provided image and return the information in the following format:
     
     {
       "brandAndModel": "Shoe brand and model name",
@@ -91,28 +91,15 @@ app.post("/analyze-shoe", async (req, res) => {
 
     // Make the API call to OpenAI with the image and prompt
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o-mini", // Adjusted to GPT-4 (ensure you use the right model)
       messages: [
         {
           role: "system",
-          content: [
-            {
-              type: "text",
-              text: prompt,
-            },
-          ],
+          content: prompt,
         },
         {
           role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64Image}`,
-                detail: "high", // Base64-encoded image
-              },
-            },
-          ],
+          content: `![shoe image](data:image/jpeg;base64,${base64Image})`, // Embed base64 image in markdown format
         },
       ],
       temperature: 1,
@@ -120,9 +107,7 @@ app.post("/analyze-shoe", async (req, res) => {
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0,
-      response_format: {
-        type: "json_object",
-      },
+      response_format: "json", // Return response in JSON format
     });
 
     console.log("API Response:", response);
@@ -136,6 +121,6 @@ app.post("/analyze-shoe", async (req, res) => {
 });
 
 // Start the Express server
-app.listen(3000, "0.0.0.0", () => {
-  console.log("Server running on http://0.0.0.0:3000");
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
