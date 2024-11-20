@@ -91,15 +91,28 @@ app.post("/analyze-shoe", async (req, res) => {
 
     // Make the API call to OpenAI with the image and prompt
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Adjusted to GPT-4 (ensure you use the right model)
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: prompt,
+          content: [
+            {
+              type: "text",
+              text: prompt,
+            },
+          ],
         },
         {
           role: "user",
-          content: `![shoe image](data:image/jpeg;base64,${base64Image})`, // Embed base64 image in markdown format
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64Image}`,
+                detail: "high", // Base64-encoded image
+              },
+            },
+          ],
         },
       ],
       temperature: 1,
@@ -107,7 +120,9 @@ app.post("/analyze-shoe", async (req, res) => {
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0,
-      response_format: "json", // Return response in JSON format
+      response_format: {
+        type: "json_object",
+      },
     });
 
     console.log("API Response:", response);
