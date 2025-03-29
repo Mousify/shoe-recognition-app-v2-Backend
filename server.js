@@ -35,23 +35,40 @@ app.get("/", (req, res) => {
 // Products database
 let productsDatabase = [];
 
-// Load products from CSV
+// Update the loadProductsDatabase function
 function loadProductsDatabase() {
-  const results = [];
+  try {
+    const csvFilePath = path.join(__dirname, "products_export.csv");
 
-  fs.createReadStream(path.join(__dirname, "products_export.csv"))
-    .pipe(csv())
-    .on("data", (data) => results.push(data))
-    .on("end", () => {
-      productsDatabase = results;
-      console.log(`Loaded ${results.length} products into database`);
-    })
-    .on("error", (error) => {
-      console.error("Error loading products database:", error);
-    });
+    // Check if file exists
+    if (!fs.existsSync(csvFilePath)) {
+      console.log(
+        "Products CSV file not found. Using empty products database."
+      );
+      productsDatabase = [];
+      return;
+    }
+
+    const results = [];
+
+    fs.createReadStream(csvFilePath)
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        productsDatabase = results;
+        console.log(`Loaded ${results.length} products into database`);
+      })
+      .on("error", (error) => {
+        console.error("Error loading products database:", error);
+        productsDatabase = [];
+      });
+  } catch (error) {
+    console.error("Error in loadProductsDatabase:", error);
+    productsDatabase = [];
+  }
 }
 
-// Find relevant products based on shoe details
+// Update the findRelevantProducts function
 function findRelevantProducts(shoeDetails) {
   if (productsDatabase.length === 0) {
     return [];
@@ -69,7 +86,11 @@ function findRelevantProducts(shoeDetails) {
   // Add materials if available
   if (shoeDetails.materials) {
     Object.values(shoeDetails.materials).forEach((material) => {
-      if (material) {
+      if (
+        material &&
+        material.toLowerCase() !== "unknown" &&
+        material.toLowerCase() !== "unspecified"
+      ) {
         keywords.push(material.toLowerCase());
       }
     });
@@ -81,32 +102,83 @@ function findRelevantProducts(shoeDetails) {
       if (rec.affectedPart) {
         keywords.push(rec.affectedPart.toLowerCase());
       }
+
+      // Add recommendations as keywords (they often contain material types)
+      rec.recommendations.forEach((recommendation) => {
+        const words = recommendation.toLowerCase().split(" ");
+        // Filter out common words
+        const filteredWords = words.filter(
+          (word) =>
+            word.length > 3 &&
+            ![
+              "with",
+              "and",
+              "the",
+              "for",
+              "your",
+              "that",
+              "this",
+              "then",
+              "use",
+            ].includes(word)
+        );
+        keywords.push(...filteredWords);
+      });
     });
   }
 
-  // Filter products based on keywords
-  const relevantProducts = productsDatabase.filter((product) => {
-    // Check if product title, description, or tags match any keywords
+  console.log("Keywords extracted:", keywords);
+
+  // Score each product based on keyword matches
+  const scoredProducts = productsDatabase.map((product) => {
+    // Combine relevant product fields for matching
     const productText =
-      `${product.Title} ${product["Body (HTML)"]} ${product.Tags}`.toLowerCase();
-    return keywords.some((keyword) => productText.includes(keyword));
+      `${product.Title} ${product["Body (HTML)"]} ${product.Tags} ${product.Vendor}`.toLowerCase();
+
+    // Calculate match score
+    let score = 0;
+    keywords.forEach((keyword) => {
+      if (productText.includes(keyword)) {
+        // Increase score based on where the keyword is found
+        if (product.Title.toLowerCase().includes(keyword)) {
+          score += 3; // Higher weight for title matches
+        } else if (
+          product.Tags &&
+          product.Tags.toLowerCase().includes(keyword)
+        ) {
+          score += 2; // Medium weight for tag matches
+        } else {
+          score += 1; // Lower weight for description matches
+        }
+      }
+    });
+
+    return { product, score };
   });
 
-  // Return top 5 most relevant products
-  return relevantProducts.slice(0, 5).map((product) => ({
-    id: product.Handle,
-    title: product.Title,
-    price: product["Variant Price"]
-      ? `$${product["Variant Price"]}`
-      : "Price not available",
-    image:
-      product["Image Src"] ||
-      "https://via.placeholder.com/200x150?text=No+Image",
-    url: `https://example.com/products/${product.Handle}`,
-  }));
+  // Sort by score (highest first) and take top 6
+  const topProducts = scoredProducts
+    .filter((item) => item.score > 0) // Only include products with matches
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6)
+    .map((item) => ({
+      id: item.product.Handle,
+      title: item.product.Title,
+      price: item.product["Variant Price"]
+        ? `$${item.product["Variant Price"]}`
+        : "Price not available",
+      image:
+        item.product["Image Src"] ||
+        "https://via.placeholder.com/200x150?text=No+Image",
+      vendor: item.product.Vendor,
+      url: `https://example.com/products/${item.product.Handle}`,
+    }));
+
+  console.log(`Found ${topProducts.length} relevant products`);
+  return topProducts;
 }
 
-// Translations for different languages
+// Update the translations in the backend
 const translations = {
   en: {
     systemPrompt:
@@ -130,32 +202,97 @@ const translations = {
       generalCare: ["General care tips for the shoe"],
     },
   },
-  es: {
+  ru: {
     systemPrompt:
-      "Eres un asistente de tienda de calzado entrenado para identificar modelos de zapatos, materiales y proporcionar recomendaciones de limpieza.",
+      "Вы помощник интернет-магазина обуви, обученный определять модели обуви, материалы и предоставлять рекомендации по чистке.",
     responseFormat: {
-      brandAndModel: "Marca y modelo del zapato",
+      brandAndModel: "Бренд и название модели обуви",
       materials: {
-        upper: "Material de la parte superior",
-        lining: "Material del forro",
-        insole: "Material de la plantilla",
-        outsole: "Material de la suela",
-        laces: "Material de los cordones",
-        tongue: "Material de la lengüeta",
+        upper: "Материал верха",
+        lining: "Материал подкладки",
+        insole: "Материал стельки",
+        outsole: "Материал подошвы",
+        laces: "Материал шнурков",
+        tongue: "Материал язычка",
       },
       cleaningRecommendations: [
         {
-          affectedPart: "La parte afectada del zapato",
-          recommendations: ["Lista de recomendaciones de limpieza"],
+          affectedPart: "Поврежденная часть обуви",
+          recommendations: ["Список рекомендаций по чистке"],
         },
       ],
-      generalCare: ["Consejos generales de cuidado para el zapato"],
+      generalCare: ["Общие советы по уходу за обувью"],
     },
   },
-  // Add more languages as needed
+  lt: {
+    systemPrompt:
+      "Jūs esate batų elektroninės parduotuvės asistentas, apmokytas atpažinti batų modelius, medžiagas ir teikti valymo rekomendacijas.",
+    responseFormat: {
+      brandAndModel: "Batų prekės ženklas ir modelio pavadinimas",
+      materials: {
+        upper: "Viršutinės dalies medžiaga",
+        lining: "Pamušalo medžiaga",
+        insole: "Vidpadžio medžiaga",
+        outsole: "Pado medžiaga",
+        laces: "Raištelių medžiaga",
+        tongue: "Liežuvėlio medžiaga",
+      },
+      cleaningRecommendations: [
+        {
+          affectedPart: "Paveikta batų dalis",
+          recommendations: ["Valymo rekomendacijų sąrašas"],
+        },
+      ],
+      generalCare: ["Bendri batų priežiūros patarimai"],
+    },
+  },
 };
 
-// POST endpoint to analyze shoe image
+// Update the checkImageQuality function in the backend
+async function checkImageQuality(base64Image) {
+  try {
+    // Use OpenAI to check image quality
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an image quality analyzer. Assess if the provided image is suitable for shoe recognition. Check for issues like: too dark, too bright/overexposed, blurry, or too low resolution. If there are issues, explain what's wrong in a brief, user-friendly message. If the image is good quality, respond with 'PASS'.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64Image}`,
+                detail: "low",
+              },
+            },
+          ],
+        },
+      ],
+      temperature: 0.5,
+      max_tokens: 100,
+    });
+
+    const result = response.choices[0].message.content.trim();
+
+    // If the response is "PASS", the image is good quality
+    if (result === "PASS") {
+      return null;
+    }
+
+    // Otherwise, return the quality issue
+    return result;
+  } catch (error) {
+    console.error("Error checking image quality:", error);
+    return null; // Continue with analysis if quality check fails
+  }
+}
+
+// Update the analyze-shoe endpoint to include quality check
 app.post("/analyze-shoe", async (req, res) => {
   console.log("Received a POST request to /analyze-shoe");
   try {
@@ -169,14 +306,16 @@ app.post("/analyze-shoe", async (req, res) => {
 
     // Check if base64 image is provided
     if (!base64Image) {
-      return res.status(400).send("No image provided");
+      return res
+        .status(400)
+        .json({ error: "missing_image", message: "No image provided" });
     }
 
     // Check image quality
     const imageQualityIssue = await checkImageQuality(base64Image);
     if (imageQualityIssue) {
       return res
-        .status(400)
+        .status(200)
         .json({ error: "image_quality", message: imageQualityIssue });
     }
 
@@ -196,8 +335,8 @@ app.post("/analyze-shoe", async (req, res) => {
         "lining": "${translation.responseFormat.materials.lining}",
         "insole": "${translation.responseFormat.materials.insole}",
         "outsole": "${translation.responseFormat.materials.outsole}",
-        "laces": "${translation.responseFormat.materials.laces}",
-        "tongue": "${translation.responseFormat.materials.tongue}"
+        "laces": "Material of the laces",
+        "tongue": "Material of the tongue"
       },
       "cleaningRecommendations": [
         {
@@ -280,56 +419,11 @@ app.post("/analyze-shoe", async (req, res) => {
     res.json(shoeDetails);
   } catch (error) {
     console.error("Error processing image:", error);
-    res.status(500).send("Error processing image");
+    res
+      .status(500)
+      .json({ error: "processing_error", message: "Error processing image" });
   }
 });
-
-// Check image quality
-async function checkImageQuality(base64Image) {
-  try {
-    // Convert base64 to buffer
-    const buffer = Buffer.from(base64Image, "base64");
-
-    // Use OpenAI to check image quality
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an image quality analyzer. Assess if the provided image is suitable for shoe recognition. Check for issues like: too dark, too bright/overexposed, blurry, or too low resolution. If there are issues, explain what's wrong. If the image is good quality, respond with 'PASS'.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64Image}`,
-                detail: "low",
-              },
-            },
-          ],
-        },
-      ],
-      temperature: 0.5,
-      max_tokens: 100,
-    });
-
-    const result = response.choices[0].message.content.trim();
-
-    // If the response is "PASS", the image is good quality
-    if (result === "PASS") {
-      return null;
-    }
-
-    // Otherwise, return the quality issue
-    return result;
-  } catch (error) {
-    console.error("Error checking image quality:", error);
-    return null; // Continue with analysis if quality check fails
-  }
-}
 
 // Start the Express server
 app.listen(port, () => {
