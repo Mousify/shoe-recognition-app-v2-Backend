@@ -304,29 +304,29 @@ app.post("/analyze-shoe", async (req, res) => {
       language = "en",
     } = req.body;
 
-    // Check if base64 image is provided
-    if (!base64Image) {
-      return res
-        .status(400)
-        .json({ error: "missing_image", message: "No image provided" });
-    }
+    // Check if we have either an image or brand information
+    const hasImage = !!base64Image;
+    const hasBrandInfo = !!brand && brand.trim().length > 0;
 
-    // Check image quality
-    const imageQualityIssue = await checkImageQuality(base64Image);
-    if (imageQualityIssue) {
-      return res
-        .status(200)
-        .json({ error: "image_quality", message: imageQualityIssue });
+    if (!hasImage && !hasBrandInfo) {
+      return res.status(400).json({
+        error: "missing_input",
+        message: "Please provide either an image or brand/model information",
+      });
     }
 
     // Get translation for selected language or default to English
     const translation = translations[language] || translations.en;
 
-    // Construct the user prompt for OpenAI Vision API
+    // Construct the user prompt for OpenAI
     let prompt = `
     ${translation.systemPrompt}
 
-    Analyze the shoe in the provided image and return the information in the following format:
+    Analyze the ${
+      hasImage
+        ? "shoe in the provided image"
+        : "shoe based on the provided brand/model information"
+    } and return the information in the following format:
     
     {
       "brandAndModel": "${translation.responseFormat.brandAndModel}",
@@ -335,14 +335,19 @@ app.post("/analyze-shoe", async (req, res) => {
         "lining": "${translation.responseFormat.materials.lining}",
         "insole": "${translation.responseFormat.materials.insole}",
         "outsole": "${translation.responseFormat.materials.outsole}",
-        "laces": "Material of the laces",
-        "tongue": "Material of the tongue"
+        "laces": "${translation.responseFormat.materials.laces}",
+        "tongue": "${translation.responseFormat.materials.tongue}"
       },
       "cleaningRecommendations": [
         {
-          "affectedPart": "${translation.responseFormat.cleaningRecommendations[0].affectedPart}",
+          "affectedPart": "${
+            translation.responseFormat.cleaningRecommendations[0].affectedPart
+          }",
           "recommendations": [
-            "${translation.responseFormat.cleaningRecommendations[0].recommendations[0]}"
+            "${
+              translation.responseFormat.cleaningRecommendations[0]
+                .recommendations[0]
+            }"
           ]
         }
       ],
@@ -353,11 +358,17 @@ app.post("/analyze-shoe", async (req, res) => {
     - If the brand and model cannot be recognized, provide your best estimate or mark it as "unknown."
     - In cases where part of the material cannot be clearly identified, use "unspecified" or "possibly [type]" for transparency.
     - Be as specific as possible, but avoid guessing if the information is not recognizable.
-    - Please format the response as JSON with the appropriate details based on the shoe in the image.
+    - Please format the response as JSON with the appropriate details based on the ${
+      hasImage ? "shoe in the image" : "provided brand/model information"
+    }.
     `;
 
-    if (brand) {
-      prompt += ` The user has provided the brand: "${brand}".`;
+    if (hasBrandInfo) {
+      prompt += ` The user has provided the brand/model: "${brand}". Use this information to identify the shoe and its characteristics as accurately as possible.`;
+
+      if (!hasImage) {
+        prompt += ` Since no image was provided, rely entirely on the brand/model information to determine the materials, appropriate cleaning recommendations, and general care tips for this type of shoe.`;
+      }
     }
 
     if (problemDescription) {
@@ -368,32 +379,54 @@ app.post("/analyze-shoe", async (req, res) => {
       prompt += ` The affected part of the shoe is: "${affectedPart}".`;
     }
 
-    // Make the API call to OpenAI with the image and prompt
+    // Check image quality if an image is provided
+    if (hasImage) {
+      const imageQualityIssue = await checkImageQuality(base64Image);
+      if (imageQualityIssue) {
+        return res
+          .status(200)
+          .json({ error: "image_quality", message: imageQualityIssue });
+      }
+    }
+
+    // Make the API call to OpenAI
+    const messages = [
+      {
+        role: "system",
+        content: [
+          {
+            type: "text",
+            text: prompt,
+          },
+        ],
+      },
+    ];
+
+    // Add image if available
+    if (hasImage) {
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`,
+              detail: "high",
+            },
+          },
+        ],
+      });
+    } else {
+      // Text-only query
+      messages.push({
+        role: "user",
+        content: `Please analyze this shoe: ${brand}`,
+      });
+    }
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "text",
-              text: prompt,
-            },
-          ],
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64Image}`,
-                detail: "high",
-              },
-            },
-          ],
-        },
-      ],
+      messages: messages,
       temperature: 1,
       max_tokens: 2048,
       top_p: 1,
@@ -418,10 +451,10 @@ app.post("/analyze-shoe", async (req, res) => {
     // Send the formatted response back to the client
     res.json(shoeDetails);
   } catch (error) {
-    console.error("Error processing image:", error);
+    console.error("Error processing request:", error);
     res
       .status(500)
-      .json({ error: "processing_error", message: "Error processing image" });
+      .json({ error: "processing_error", message: "Error processing request" });
   }
 });
 
