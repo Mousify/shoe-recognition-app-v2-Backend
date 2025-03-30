@@ -127,6 +127,16 @@ function findRelevantProducts(shoeDetails) {
     });
   }
 
+  // Add recommended tags if available
+  if (
+    shoeDetails.recommendedTags &&
+    Array.isArray(shoeDetails.recommendedTags)
+  ) {
+    keywords.push(
+      ...shoeDetails.recommendedTags.map((tag) => tag.toLowerCase())
+    );
+  }
+
   console.log("Keywords extracted:", keywords);
 
   // Score each product based on keyword matches
@@ -169,7 +179,7 @@ function findRelevantProducts(shoeDetails) {
         : "Price not available",
       image:
         item.product["Image Src"] ||
-        "https://www.jdsports.lt/prekiu-zenklai/crep-protect",
+        "https://via.placeholder.com/200x150?text=No+Image",
       vendor: item.product.Vendor,
       url: `https://example.com/products/${item.product.Handle}`,
     }));
@@ -200,6 +210,7 @@ const translations = {
         },
       ],
       generalCare: ["General care tips for the shoe"],
+      recommendedTags: ["Tags for product recommendations"],
     },
   },
   ru: {
@@ -222,6 +233,7 @@ const translations = {
         },
       ],
       generalCare: ["Общие советы по уходу за обувью"],
+      recommendedTags: ["Теги для рекомендаций продуктов"],
     },
   },
   lt: {
@@ -244,21 +256,22 @@ const translations = {
         },
       ],
       generalCare: ["Bendri batų priežiūros patarimai"],
+      recommendedTags: ["Žymos produktų rekomendacijoms"],
     },
   },
 };
 
-// Update the checkImageQuality function in the backend
+// Update the checkImageQuality function in the backend with less strict criteria
 async function checkImageQuality(base64Image) {
   try {
-    // Use OpenAI to check image quality
+    // Use OpenAI to check image quality with a more lenient prompt
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
           content:
-            "You are an image quality analyzer. Assess if the provided image is suitable for shoe recognition. Check for issues like: too dark, too bright/overexposed, blurry, or too low resolution. If there are issues, explain what's wrong in a brief, user-friendly message. If the image is good quality, respond with 'PASS'.",
+            "You are an image quality analyzer. Check if the provided image is suitable for shoe recognition. Only flag issues if they are significant, such as extremely poor lighting, severe blurriness, or very low resolution. If there's a minor issue but the image is still usable, don't flag it. If a major issue is detected, provide a short, user-friendly explanation. If the image is good enough for recognition, respond with 'PASS'.",
         },
         {
           role: "user",
@@ -292,7 +305,7 @@ async function checkImageQuality(base64Image) {
   }
 }
 
-// Update the analyze-shoe endpoint to include quality check
+// Update the analyze-shoe endpoint to include quality check and product tags
 app.post("/analyze-shoe", async (req, res) => {
   console.log("Received a POST request to /analyze-shoe");
   try {
@@ -320,48 +333,49 @@ app.post("/analyze-shoe", async (req, res) => {
 
     // Construct the user prompt for OpenAI
     let prompt = `
-    ${translation.systemPrompt}
+  ${translation.systemPrompt}
 
-    Analyze the ${
-      hasImage
-        ? "shoe in the provided image"
-        : "shoe based on the provided brand/model information"
-    } and return the information in the following format:
-    
-    {
-      "brandAndModel": "${translation.responseFormat.brandAndModel}",
-      "materials": {
-        "upper": "${translation.responseFormat.materials.upper}",
-        "lining": "${translation.responseFormat.materials.lining}",
-        "insole": "${translation.responseFormat.materials.insole}",
-        "outsole": "${translation.responseFormat.materials.outsole}",
-        "laces": "${translation.responseFormat.materials.laces}",
-        "tongue": "${translation.responseFormat.materials.tongue}"
-      },
-      "cleaningRecommendations": [
-        {
-          "affectedPart": "${
-            translation.responseFormat.cleaningRecommendations[0].affectedPart
-          }",
-          "recommendations": [
-            "${
-              translation.responseFormat.cleaningRecommendations[0]
-                .recommendations[0]
-            }"
-          ]
-        }
-      ],
-      "generalCare": ["${translation.responseFormat.generalCare[0]}"]
-    }
-    
-    # Notes
-    - If the brand and model cannot be recognized, provide your best estimate or mark it as "unknown."
-    - In cases where part of the material cannot be clearly identified, use "unspecified" or "possibly [type]" for transparency.
-    - Be as specific as possible, but avoid guessing if the information is not recognizable.
-    - Please format the response as JSON with the appropriate details based on the ${
-      hasImage ? "shoe in the image" : "provided brand/model information"
-    }.
-    `;
+  Analyze the ${
+    hasImage
+      ? "shoe in the provided image"
+      : "shoe based on the provided brand/model information"
+  } and return the information in the following format:
+  
+  {
+    "brandAndModel": "${translation.responseFormat.brandAndModel}",
+    "materials": {
+      "upper": "${translation.responseFormat.materials.upper}",
+      "lining": "${translation.responseFormat.materials.lining}",
+      "insole": "${translation.responseFormat.materials.insole}",
+      "outsole": "${translation.responseFormat.materials.outsole}",
+      "laces": "${translation.responseFormat.materials.laces}",
+      "tongue": "${translation.responseFormat.materials.tongue}"
+    },
+    "cleaningRecommendations": [
+      {
+        "affectedPart": "${
+          translation.responseFormat.cleaningRecommendations[0].affectedPart
+        }",
+        "recommendations": [
+          "${
+            translation.responseFormat.cleaningRecommendations[0]
+              .recommendations[0]
+          }"
+        ]
+      }
+    ],
+    "generalCare": ["${translation.responseFormat.generalCare[0]}"],
+    "recommendedTags": ["${translation.responseFormat.recommendedTags[0]}"]
+  }
+  
+  # Notes
+  - If the brand and model cannot be recognized, provide your best estimate or mark it as "unknown."
+  - In cases where part of the material cannot be clearly identified, use "unspecified" or "possibly [type]" for transparency.
+  - Be as specific as possible, but avoid guessing if the information is not recognizable.
+  - Please format the response as JSON with the appropriate details based on the ${
+    hasImage ? "shoe in the image" : "provided brand/model information"
+  }.
+  `;
 
     if (hasBrandInfo) {
       prompt += ` The user has provided the brand/model: "${brand}". Use this information to identify the shoe and its characteristics as accurately as possible.`;
@@ -373,6 +387,20 @@ app.post("/analyze-shoe", async (req, res) => {
 
     if (problemDescription) {
       prompt += ` The user has described the following issue: "${problemDescription}".`;
+
+      // Add the product tags request to the prompt
+      prompt += `
+    
+    In addition to the standard analysis, please provide 1 tag from each category (2 tags from Shoe Care Subcategories) that most accurately describes the products this shoe would need to resolve the problem. 
+    These tags should be from the following categories:
+    - General Categories: Shoe Care, Accessories, Insole
+    - Shoe Care Subcategories: Cleaner, Foam, Restore, Reviver, Protect, Repel, Deodorant, Brush, Kits
+    - Insoles Subcategories: Basic, Sport, Winter
+    - Accessories Subcategories: Horns, Trees, Laces
+    - Seasonal Picks: Winter, Autumn, Summer, Spring, Seasonal
+    
+    Include these tags in a separate "recommendedTags" array in your JSON response.
+    `;
     }
 
     if (affectedPart) {
