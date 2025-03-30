@@ -169,7 +169,7 @@ function findRelevantProducts(shoeDetails) {
         : "Price not available",
       image:
         item.product["Image Src"] ||
-        "https://via.placeholder.com/200x150?text=No+Image",
+        "https://www.jdsports.lt/prekiu-zenklai/crep-protect",
       vendor: item.product.Vendor,
       url: `https://example.com/products/${item.product.Handle}`,
     }));
